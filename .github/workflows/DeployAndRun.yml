@@ -1,8 +1,13 @@
 name: Deploy and Run
 env:
   REPO_NAME: ${{ github.event.repository.name }}
+
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
 permissions:
   id-token: write
   contents: read
@@ -23,9 +28,19 @@ jobs:
         login-server: ${{ secrets.ACR_NAME_URL }}
         username: ${{ secrets.REGISTRY_USERNAME }}
         password: ${{ secrets.REGISTRY_PASSWORD }}
-    - run: |
-        docker build . -t ${{ secrets.ACR_NAME_URL }}/${{env.REPO_NAME}}:${{ github.sha }}
-        docker push ${{ secrets.ACR_NAME_URL }}/${{env.REPO_NAME}}:${{ github.sha }}
+
+    - name: 'Build & Push Docker Image (sha)'
+      run: |
+        docker build . -t ${{ secrets.ACR_NAME_URL }}/${{ env.REPO_NAME }}:${{ github.sha }}
+        docker push ${{ secrets.ACR_NAME_URL }}/${{ env.REPO_NAME }}:${{ github.sha }}
+
+    - name: 'Build & Push Docker Image (tag version)'
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        version=$(echo "${GITHUB_REF_NAME}" | sed 's/^v//')
+        echo "Building version tag: $version"
+        docker build . -t ${{ secrets.ACR_NAME_URL }}/${{ env.REPO_NAME }}:$version
+        docker push ${{ secrets.ACR_NAME_URL }}/${{ env.REPO_NAME }}:$version
 
   deploy:
     needs: build
@@ -39,21 +54,19 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
     
-    - name: 'deploy Container Instance'
+    - name: 'Deploy Container Instance'
       uses: azure/aci-deploy@v1
       with:
-        location: eastus
+        location: northcentralus
         name: azureapp
         resource-group: ${{ secrets.AZURE_RESOURCE_GROUP }}
-        image: ${{ secrets.ACR_NAME_URL }}/${{env.REPO_NAME}}:${{ github.sha }}
+        image: ${{ secrets.ACR_NAME_URL }}/${{ env.REPO_NAME }}:${{ github.sha }}
         dns-name-label: azureapp-${{ github.run_id }}-${{ github.run_attempt }}
         registry-username: ${{ secrets.REGISTRY_USERNAME }}
         registry-password: ${{ secrets.REGISTRY_PASSWORD }}
-        ports: 8080
+        ports: 8080 
         cpu: 0.25
         memory: 0.5
     
-    - name: 'logout'
-      run: |
-        az logout
-      #TODO:Que si viene con una etiqueta o con un tag, me cree una imagen con la etiqueta o con el tag en donde es del tipo vX.Y.Z que se envio y ademas, ver de actualizar las versiones de los scripts.
+    - name: 'Logout'
+      run: az logout
